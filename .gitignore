@@ -1,0 +1,16 @@
+# Secrets must never be committed.
+*.secret
+*.secrets
+secrets/
+*.key
+*.pem
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

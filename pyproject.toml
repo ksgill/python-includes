@@ -1,0 +1,35 @@
+# This file doubles as the template for a tool that vendors from here: copy
+# everything below [project] and change the names.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-includes"
+version = "1.0.0"
+description = "Canonical modules vendored into self-contained Python tools"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["includes*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-include = ["vendor-sync"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "C4", "RET", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["ARG001"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["includes", "vendor-sync"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

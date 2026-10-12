@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Copy pinned python-includes modules into a tool, or check they are current.
+
+usage: vendor-sync [--check] [TARGET]
+
+TARGET (default: the current directory) is a tool's repository. It names what it
+wants in two places:
+
+    PY_INCLUDES_VERSION     one line, the python-includes tag to vendor from
+    pyproject.toml          [tool.python-includes]
+                            package = "wifi_prober"   # directory to copy into
+                            modules = ["log"]         # includes/<name>.py each
+
+Each module is read from that tag in this repository's git history -- not from
+the working tree, so the checkout does not have to be at the tag -- and written
+to TARGET/<package>/<name>.py under a header naming where it came from.
+
+--check writes nothing and exits 1 if any vendored file differs from what the
+pinned tag would produce. A vendored file is never edited in place: change it
+here, tag, bump PY_INCLUDES_VERSION, and run vendor-sync.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+SOURCE = Path(__file__).resolve().parent
+
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_TAG_RE = re.compile(r"v\d+\.\d+\.\d+")
+
+
+class SyncError(Exception):
+    """The target is misconfigured or the pinned tag cannot be read."""
+
+
+def _header(tag: str, module: str) -> bytes:
+    return (
+        f"# Vendored from python-includes {tag} (includes/{module}.py). Do not edit\n"
+        "# this copy: change it upstream, bump PY_INCLUDES_VERSION, run vendor-sync.\n"
+    ).encode()
+
+
+def _read_pin(target: Path) -> str:
+    pin_file = target / "PY_INCLUDES_VERSION"
+    try:
+        tag = pin_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        raise SyncError(f"{pin_file} does not exist") from None
+    if _TAG_RE.fullmatch(tag) is None:
+        raise SyncError(f"{pin_file} holds {tag!r}, expected a tag like v1.0.0")
+    return tag
+
+
+def _read_manifest(target: Path) -> tuple[str, list[str]]:
+    pyproject = target / "pyproject.toml"
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SyncError(f"{pyproject} does not exist") from None
+    except tomllib.TOMLDecodeError as exc:
+        raise SyncError(f"{pyproject} is not valid TOML: {exc}") from None
+    table = data.get("tool", {}).get("python-includes")
+    if not isinstance(table, dict):
+        raise SyncError(f"{pyproject} has no [tool.python-includes] table")
+    package = table.get("package")
+    modules = table.get("modules")
+    # Both end up in filesystem paths, so they are held to bare identifiers.
+    if not isinstance(package, str) or _NAME_RE.fullmatch(package) is None:
+        raise SyncError("[tool.python-includes] package must be a bare package name")
+    # A dunder name is refused so a manifest can never replace __init__.py or
+    # __main__.py, whatever a future tag happens to contain.
+    if (
+        not isinstance(modules, list)
+        or not modules
+        or not all(
+            isinstance(m, str) and _NAME_RE.fullmatch(m) and not m.startswith("__") for m in modules
+        )
+    ):
+        raise SyncError("[tool.python-includes] modules must list bare module names")
+    if not (target / package).is_dir():
+        raise SyncError(f"package directory {target / package} does not exist")
+    return package, modules
+
+
+def _upstream(tag: str, module: str) -> bytes:
+    """Return includes/<module>.py as committed at *tag*, byte for byte."""
+    spec = f"refs/tags/{tag}:includes/{module}.py"
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(SOURCE), "show", spec],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise SyncError(f"cannot run git: {exc}") from None
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise SyncError(
+            f"cannot read {spec} from {SOURCE}: {detail} "
+            "(is the tag fetched? try 'git fetch --tags')"
+        )
+    return proc.stdout
+
+
+def sync(target: Path, *, check: bool) -> int:
+    """Write (or with *check*, compare) every vendored module. Returns stale count."""
+    tag = _read_pin(target)
+    package, modules = _read_manifest(target)
+    # Everything is read from the tag before anything is written, so a module
+    # the tag lacks leaves the target untouched rather than half-synced.
+    wanted = {m: _header(tag, m) + _upstream(tag, m) for m in modules}
+    stale = 0
+    for module, content in wanted.items():
+        dest = target / package / f"{module}.py"
+        try:
+            current = dest.read_bytes() if dest.is_file() else None
+        except OSError as exc:
+            raise SyncError(f"cannot read {dest}: {exc.strerror or exc}") from None
+        if current == content:
+            print(f"current  {dest} ({tag})")
+            continue
+        stale += 1
+        if check:
+            state = "is missing;" if current is None else "differs from"
+            print(f"STALE    {dest} {state} python-includes {tag}", file=sys.stderr)
+            continue
+        try:
+            dest.write_bytes(content)
+        except OSError as exc:
+            raise SyncError(f"cannot write {dest}: {exc.strerror or exc}") from None
+        print(f"written  {dest} ({tag})")
+    return stale
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="vendor-sync",
+        description="Copy pinned python-includes modules into a tool, or check them.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Write nothing; exit 1 if any vendored file is not what the pin produces.",
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        type=Path,
+        default=Path.cwd(),
+        help="The tool's repository (default: the current directory).",
+    )
+    args = parser.parse_args(argv)
+    try:
+        stale = sync(args.target.resolve(), check=args.check)
+    except SyncError as exc:
+        print(f"vendor-sync: {exc}", file=sys.stderr)
+        return 2
+    if args.check and stale:
+        print(
+            f"vendor-sync: {stale} vendored file(s) out of date; run vendor-sync "
+            "from a python-includes checkout and commit the result",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,100 @@
+# Reusable Python CI. Called by each tool that vendors from this repository, so
+# there is one definition rather than three drifting copies.
+#
+# This repository is public, so callers need no secret: the vendor job clones
+# it anonymously over https, and a public repository's reusable workflows are
+# callable without the Actions -> Access setting a private one requires.
+#
+# The tool versions are pinned. Lint and type-check results change between
+# releases, and an unpinned CI means a finding here cannot be reproduced on the
+# workstation and vice versa. Bump them here and in the dev venv together.
+
+name: python-ci
+
+on:
+  workflow_call:
+    inputs:
+      smoke:
+        description: "Command(s) run from a bare checkout, nothing installed — the way the tool runs on its target. Empty skips the job."
+        type: string
+        default: ""
+      python-versions:
+        description: "JSON list of Python versions for the test matrix: the floor and the newest deployed"
+        type: string
+        default: '["3.11", "3.14"]'
+
+permissions:
+  contents: read
+
+env:
+  RUFF_VERSION: "0.16.9"
+  MYPY_VERSION: "2.4.0"
+  PYTEST_VERSION: "9.1.1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install "ruff==${RUFF_VERSION}" "mypy==${MYPY_VERSION}"
+      - run: ruff check .
+      - run: ruff format --check .
+      # Strict, configured by [tool.mypy] in the tool's pyproject.toml. Runs
+      # against the oldest supported version's semantics (python_version there).
+      - run: mypy
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Editable install so tests of the console-script entry point have one to
+      # run. tests/conftest.py still puts the checkout first on sys.path.
+      - run: pip install -e . "pytest==${PYTEST_VERSION}"
+      - run: pytest -q
+
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check out python-includes at the pinned tag
+        run: |
+          set -euo pipefail
+          tag="$(cat PY_INCLUDES_VERSION)"
+          # Held to a tag shape before it reaches a command line.
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error file=PY_INCLUDES_VERSION::'$tag' is not a tag like v1.0.0"; exit 1; }
+          git clone --quiet --depth 1 --branch "$tag" \
+            https://github.com/ksgill/python-includes.git "$RUNNER_TEMP/python-includes"
+      # A vendored file that was edited in place, or a pin bumped without a
+      # re-sync, fails here.
+      - name: Vendored files match the pin
+        run: python3 "$RUNNER_TEMP/python-includes/vendor-sync" --check .
+
+  smoke:
+    if: inputs.smoke != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Nothing is installed: this is the bare-checkout path a pip-installed
+      # test run never reaches.
+      # Passed through the environment, not spliced into the script, so the
+      # text of the input can never change what this step's shell parses.
+      - name: Run from the checkout
+        env:
+          SMOKE: ${{ inputs.smoke }}
+        run: bash -euo pipefail -c "$SMOKE"
