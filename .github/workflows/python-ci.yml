@@ -4,10 +4,6 @@
 # This repository is public, so callers need no secret: the vendor job clones
 # it anonymously over https, and a public repository's reusable workflows are
 # callable without the Actions -> Access setting a private one requires.
-#
-# The tool versions are pinned. Lint and type-check results change between
-# releases, and an unpinned CI means a finding here cannot be reproduced on the
-# workstation and vice versa. Bump them here and in the dev venv together.
 
 name: python-ci
 
@@ -18,6 +14,10 @@ on:
         description: "Command(s) run from a bare checkout, nothing installed — the way the tool runs on its target. Empty skips the job."
         type: string
         default: ""
+      vendor:
+        description: "Check vendored files against PY_INCLUDES_VERSION. Off only for a repository that vendors nothing."
+        type: boolean
+        default: true
       python-versions:
         description: "JSON list of Python versions for the test matrix: the floor and the newest deployed"
         type: string
@@ -27,9 +27,10 @@ permissions:
   contents: read
 
 env:
-  RUFF_VERSION: "0.16.9"
-  MYPY_VERSION: "2.4.0"
-  PYTEST_VERSION: "9.1.1"
+  # ruff, mypy and pytest, pinned in one file. Lint and type-check results
+  # change between releases; an unpinned CI means a finding here cannot be
+  # reproduced on the workstation and vice versa.
+  DEV_REQUIREMENTS: https://raw.githubusercontent.com/ksgill/python-includes/main/dev-requirements.txt
 
 jobs:
   lint:
@@ -39,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - run: pip install "ruff==${RUFF_VERSION}" "mypy==${MYPY_VERSION}"
+      - run: pip install -r "$DEV_REQUIREMENTS"
       - run: ruff check .
       - run: ruff format --check .
       # Strict, configured by [tool.mypy] in the tool's pyproject.toml. Runs
@@ -59,10 +60,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # Editable install so tests of the console-script entry point have one to
       # run. tests/conftest.py still puts the checkout first on sys.path.
-      - run: pip install -e . "pytest==${PYTEST_VERSION}"
+      - run: pip install -r "$DEV_REQUIREMENTS" -e .
       - run: pytest -q
 
   vendor:
+    if: inputs.vendor
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

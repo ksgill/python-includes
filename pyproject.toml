@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python-includes"
-version = "1.0.0"
+version = "1.1.0"
 description = "Canonical modules vendored into self-contained Python tools"
 requires-python = ">=3.11"
 dependencies = []

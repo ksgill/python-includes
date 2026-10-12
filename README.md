@@ -86,8 +86,8 @@ The workflow assumes the tool:
   tables from the template, so every command runs with no arguments. Two
   values in the template are this repository's own and must be changed:
   `[tool.setuptools.packages.find] include` and `[tool.mypy] files`;
-- vendors from here. The `vendor` job is unconditional and fails without a
-  `PY_INCLUDES_VERSION` file;
+- vendors from here. The `vendor` job fails without a `PY_INCLUDES_VERSION`
+  file; `vendor: false` turns it off for a repository that vendors nothing;
 - has no runtime dependencies. The lint job installs only `ruff` and `mypy`.
 
 Tools call the workflow at `@main`, so a change pushed here takes effect in
@@ -95,9 +95,10 @@ every tool's CI at once. That is the point — one definition — and the cost: 
 mistake here breaks all of them together. The vendored modules are pinned by
 tag and do not move that way.
 
-The lint, type-check and test tools are pinned in the workflow. Keep the
-development venv on the same versions, or a finding in one place will not
-reproduce in the other.
+The lint, type-check and test tools are pinned in `dev-requirements.txt`, the
+one place their versions are written. The workflow installs from it; build a
+development venv from it too, or a finding in one place will not reproduce in
+the other.
 
 ## Using `log`
 
@@ -111,6 +112,10 @@ log.emit(result)  # stdout, undecorated: the data channel
 log.die("cannot continue: fix X and re-run")  # error, then exit 1
 ```
 
+`log.use_colour(stream)` is the test the status lines use — no colour under
+`NO_COLOR` or `TERM=dumb`, or off a terminal — for a tool that colours its own
+report on stdout.
+
 Tiers are `ERROR` (-1), `WARN` (0), `INFO` (1, the default) and `DEBUG` (2). A
 tool that is quiet unless given `-v` can pass the flag count straight to
 `set_verbosity`.
@@ -122,6 +127,6 @@ is byte-exact. Redacting secrets is the caller's job.
 ## Development
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install ruff==0.16.9 mypy==2.4.0 pytest==9.1.1
+python3 -m venv .venv && .venv/bin/pip install -r dev-requirements.txt
 .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy && .venv/bin/pytest
 ```

@@ -1,0 +1,8 @@
+# The lint, type-check and test tools, pinned. This file is the one place the
+# versions are written: python-ci.yml installs from it, and so should a
+# development venv, or a finding in one will not reproduce in the other.
+#
+#   pip install -r https://raw.githubusercontent.com/ksgill/python-includes/main/dev-requirements.txt
+ruff==0.16.9
+mypy==2.4.0
+pytest==9.1.1

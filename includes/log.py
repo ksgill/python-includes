@@ -73,7 +73,13 @@ def set_verbosity(level: int) -> None:
     _verbosity = level
 
 
-def _colour(stream: TextIO) -> bool:
+def use_colour(stream: TextIO) -> bool:
+    """Whether escape sequences are safe to write to *stream*.
+
+    Public so a tool that colours its own stdout report makes the same decision
+    as the status lines do: no colour under NO_COLOR or TERM=dumb, or when the
+    stream is not a terminal.
+    """
     if os.environ.get("NO_COLOR") is not None:
         return False
     # TERM=dumb means the terminal cannot render escape sequences, so a tty
@@ -91,7 +97,7 @@ def _stamp() -> str:
 def _log(colour: str, label: str, stream: TextIO, message: str, min_level: int) -> None:
     if stream is sys.stderr and _verbosity < min_level:
         return
-    prefix = f"{colour}[{label}]{_RST}" if _colour(stream) else f"[{label}]"
+    prefix = f"{colour}[{label}]{_RST}" if use_colour(stream) else f"[{label}]"
     print(f"{_stamp()} {prefix} {_sanitize(message)}", file=stream, flush=True)
 
 

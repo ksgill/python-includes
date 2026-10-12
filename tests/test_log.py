@@ -214,27 +214,27 @@ class TestColourDecision:
     def test_colour_on_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setenv("TERM", "xterm-256color")
-        assert log._colour(_Tty()) is True
+        assert log.use_colour(_Tty()) is True
 
     def test_no_colour_when_redirected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setenv("TERM", "xterm-256color")
-        assert log._colour(_Pipe()) is False
+        assert log.use_colour(_Pipe()) is False
 
     def test_no_color_env_wins_even_on_a_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for value in ("", "1", "anything"):
             monkeypatch.setenv("NO_COLOR", value)
-            assert log._colour(_Tty()) is False
+            assert log.use_colour(_Tty()) is False
 
     def test_dumb_terminal_gets_no_colour(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setenv("TERM", "dumb")
-        assert log._colour(_Tty()) is False
+        assert log.use_colour(_Tty()) is False
 
     def test_no_term_set_and_not_a_tty_is_no_colour(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.delenv("TERM", raising=False)
-        assert log._colour(_Pipe()) is False
+        assert log.use_colour(_Pipe()) is False
 
 
 class _RecordingTty:
