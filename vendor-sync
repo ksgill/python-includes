@@ -8,7 +8,7 @@ wants in two places:
 
     PY_INCLUDES_VERSION     one line, the python-includes tag to vendor from
     pyproject.toml          [tool.python-includes]
-                            package = "wifi_prober"   # directory to copy into
+                            package = "my_tool"       # directory to copy into
                             modules = ["log"]         # includes/<name>.py each
 
 Each module is read from that tag in this repository's git history -- not from
