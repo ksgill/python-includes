@@ -40,6 +40,15 @@ package = "my_tool"       # the package directory to copy into
 modules = ["log"]         # includes/<name>.py for each
 ```
 
+A repository holding more than one tool in the flat layout names them all
+with `packages` instead of `package` (exactly one of the two keys; a
+non-empty list of distinct package names), and every module is copied into
+each:
+
+```toml
+packages = ["my_tool", "my_other_tool"]
+```
+
 Then, from a checkout of this repository:
 
 ```bash

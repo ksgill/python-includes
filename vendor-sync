@@ -11,6 +11,14 @@ wants in two places:
                             package = "my_tool"       # directory to copy into
                             modules = ["log"]         # includes/<name>.py each
 
+A repository that holds more than one self-contained tool in the flat layout
+names them all with packages instead (exactly one of the two keys), and every
+module is copied into each:
+
+                            packages = ["my_tool", "my_other_tool"]
+
+Exactly one of package and packages is given.
+
 Each module is read from that tag in this repository's git history -- not from
 the working tree, so the checkout does not have to be at the tag -- and written
 to TARGET/<package>/<name>.py under a header naming where it came from.
@@ -57,7 +65,8 @@ def _read_pin(target: Path) -> str:
     return tag
 
 
-def _read_manifest(target: Path) -> tuple[str, list[str]]:
+def _read_manifest(target: Path) -> tuple[list[str], list[str]]:
+    """Return (packages, modules) from [tool.python-includes]; both non-empty."""
     pyproject = target / "pyproject.toml"
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -68,11 +77,27 @@ def _read_manifest(target: Path) -> tuple[str, list[str]]:
     table = data.get("tool", {}).get("python-includes")
     if not isinstance(table, dict):
         raise SyncError(f"{pyproject} has no [tool.python-includes] table")
-    package = table.get("package")
+    # One tool in the repository names its package; several name them all.
+    if ("package" in table) == ("packages" in table):
+        raise SyncError("[tool.python-includes] must have exactly one of package or packages")
     modules = table.get("modules")
-    # Both end up in filesystem paths, so they are held to bare identifiers.
-    if not isinstance(package, str) or _NAME_RE.fullmatch(package) is None:
-        raise SyncError("[tool.python-includes] package must be a bare package name")
+    # Package and module names end up in filesystem paths, so they are held to
+    # bare identifiers.
+    packages: list[str]
+    if "package" in table:
+        package = table["package"]
+        if not isinstance(package, str) or _NAME_RE.fullmatch(package) is None:
+            raise SyncError("[tool.python-includes] package must be a bare package name")
+        packages = [package]
+    else:
+        packages = table["packages"]
+        if (
+            not isinstance(packages, list)
+            or not packages
+            or not all(isinstance(p, str) and _NAME_RE.fullmatch(p) for p in packages)
+            or len(set(packages)) != len(packages)
+        ):
+            raise SyncError("[tool.python-includes] packages must list unique bare package names")
     # A dunder name is refused so a manifest can never replace __init__.py or
     # __main__.py, whatever a future tag happens to contain.
     if (
@@ -83,9 +108,10 @@ def _read_manifest(target: Path) -> tuple[str, list[str]]:
         )
     ):
         raise SyncError("[tool.python-includes] modules must list bare module names")
-    if not (target / package).is_dir():
-        raise SyncError(f"package directory {target / package} does not exist")
-    return package, modules
+    for package in packages:
+        if not (target / package).is_dir():
+            raise SyncError(f"package directory {target / package} does not exist")
+    return packages, modules
 
 
 def _upstream(tag: str, module: str) -> bytes:
@@ -111,13 +137,21 @@ def _upstream(tag: str, module: str) -> bytes:
 def sync(target: Path, *, check: bool) -> int:
     """Write (or with *check*, compare) every vendored module. Returns stale count."""
     tag = _read_pin(target)
-    package, modules = _read_manifest(target)
+    packages, modules = _read_manifest(target)
     # Everything is read from the tag before anything is written, so a module
     # the tag lacks leaves the target untouched rather than half-synced.
     wanted = {m: _header(tag, m) + _upstream(tag, m) for m in modules}
     stale = 0
+    for package in packages:
+        stale += _sync_package(target / package, tag, wanted, check=check)
+    return stale
+
+
+def _sync_package(package: Path, tag: str, wanted: dict[str, bytes], *, check: bool) -> int:
+    """Write (or compare) every module in *wanted* under one package directory."""
+    stale = 0
     for module, content in wanted.items():
-        dest = target / package / f"{module}.py"
+        dest = package / f"{module}.py"
         try:
             current = dest.read_bytes() if dest.is_file() else None
         except OSError as exc:

@@ -138,6 +138,87 @@ def test_bad_manifest_is_exit_2_and_writes_nothing(
     assert list((tool / "pkg").iterdir()) == []
 
 
+@pytest.fixture
+def two_tools(tool: Path) -> Path:
+    """The tool fixture holding two packages, both named in the manifest."""
+    (tool / "other").mkdir()
+    (tool / "pyproject.toml").write_text(
+        '[tool.python-includes]\npackages = ["pkg", "other"]\nmodules = ["log"]\n'
+    )
+    return tool
+
+
+def test_packages_writes_every_module_into_every_package(vs: ModuleType, two_tools: Path) -> None:
+    assert vs.main([str(two_tools)]) == 0
+    for package in ("pkg", "other"):
+        text = (two_tools / package / "log.py").read_text()
+        assert text.startswith("# Vendored from python-includes v1.0.0 (includes/log.py).")
+        assert text.endswith("ONE = 1\n")
+    assert vs.main(["--check", str(two_tools)]) == 0
+
+
+def test_packages_check_names_the_stale_package_only(
+    vs: ModuleType, two_tools: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    vs.main([str(two_tools)])
+    dest = two_tools / "other" / "log.py"
+    dest.write_text(dest.read_text() + "# local tweak\n")
+    capsys.readouterr()
+    assert vs.main(["--check", str(two_tools)]) == 1
+    captured = capsys.readouterr()
+    assert f"STALE    {dest} differs from python-includes v1.0.0" in captured.err
+    assert f"STALE    {two_tools / 'pkg' / 'log.py'}" not in captured.err
+    assert "1 vendored file(s) out of date" in captured.err
+    assert f"current  {two_tools / 'pkg' / 'log.py'} (v1.0.0)" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("manifest", "needle"),
+    [
+        (
+            '[tool.python-includes]\npackages = ["pkg", "pkg"]\nmodules = ["log"]\n',
+            "packages must list unique bare package names",
+        ),
+        (
+            '[tool.python-includes]\npackages = []\nmodules = ["log"]\n',
+            "packages must list unique bare package names",
+        ),
+        (
+            '[tool.python-includes]\npackages = "pkg"\nmodules = ["log"]\n',
+            "packages must list unique bare package names",
+        ),
+        (
+            '[tool.python-includes]\npackages = ["pkg", "../escape"]\nmodules = ["log"]\n',
+            "packages must list unique bare package names",
+        ),
+        (
+            '[tool.python-includes]\npackage = "pkg"\npackages = ["other"]\nmodules = ["log"]\n',
+            "exactly one of package or packages",
+        ),
+        (
+            '[tool.python-includes]\nmodules = ["log"]\n',
+            "exactly one of package or packages",
+        ),
+        (
+            '[tool.python-includes]\npackages = ["pkg", "absent"]\nmodules = ["log"]\n',
+            "package directory {tool}/absent does not exist",
+        ),
+    ],
+)
+def test_bad_packages_manifest_is_exit_2_and_writes_nothing(
+    vs: ModuleType,
+    two_tools: Path,
+    capsys: pytest.CaptureFixture[str],
+    manifest: str,
+    needle: str,
+) -> None:
+    (two_tools / "pyproject.toml").write_text(manifest)
+    assert vs.main([str(two_tools)]) == 2
+    assert needle.format(tool=two_tools) in capsys.readouterr().err
+    assert list((two_tools / "pkg").iterdir()) == []
+    assert list((two_tools / "other").iterdir()) == []
+
+
 def test_missing_pin_file_is_exit_2(vs: ModuleType, tool: Path) -> None:
     (tool / "PY_INCLUDES_VERSION").unlink()
     assert vs.main([str(tool)]) == 2
