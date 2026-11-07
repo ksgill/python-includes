@@ -15,8 +15,11 @@ Verbosity is one integer, set once with `set_verbosity()`:
     INFO  (1)   + info, success and section headings  (the default)
     DEBUG (2)   + debug
 
-A tool with a repeatable `-v` flag that should be quiet by default can pass the
-count straight in: 0, 1, 2.
+`add_verbosity_args()` puts the fleet's `-v` / `-q` options on an argparse
+parser and `apply_verbosity()` sets the tier from the parsed result: `-v` is
+DEBUG, `-q` WARN, `-qq` ERROR, neither INFO. A tool with a repeatable `-v` flag
+that should be quiet by default can instead pass the count straight to
+`set_verbosity()`: 0, 1, 2.
 
 Every status message has control characters stripped before it is printed (see
 `_sanitize`). Redacting secrets is the caller's job: this module prints what it
@@ -25,6 +28,7 @@ is given.
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import os
 import sys
@@ -71,6 +75,41 @@ def set_verbosity(level: int) -> None:
     """Set the stderr verbosity: ERROR, WARN, INFO or DEBUG (or a -v count)."""
     global _verbosity
     _verbosity = level
+
+
+def add_verbosity_args(parser: argparse.ArgumentParser) -> None:
+    """Add the fleet's verbosity options to *parser*: `-v/--verbose`, `-q/--quiet`.
+
+    The two are mutually exclusive, so `-v -q` is a usage error. `-q` counts:
+    one is warnings only, two or more errors only. Read the result with
+    `apply_verbosity()` (or `verbosity_from_args()`) once the parser has run.
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-v", "--verbose", action="store_true", help="debug detail on stderr")
+    group.add_argument(
+        "-q", "--quiet", action="count", default=0, help="warnings only; -qq errors only"
+    )
+
+
+def verbosity_from_args(args: argparse.Namespace) -> int:
+    """The tier the options from `add_verbosity_args()` selected.
+
+    DEBUG for `-v`, ERROR for `-qq` or more, WARN for `-q`, INFO for neither.
+    """
+    if args.verbose:
+        return DEBUG
+    if args.quiet >= 2:
+        return ERROR
+    if args.quiet == 1:
+        return WARN
+    return INFO
+
+
+def apply_verbosity(args: argparse.Namespace) -> int:
+    """`set_verbosity()` from the parsed options; returns the tier it set."""
+    level = verbosity_from_args(args)
+    set_verbosity(level)
+    return level
 
 
 def use_colour(stream: TextIO) -> bool:

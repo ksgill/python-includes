@@ -1,4 +1,4 @@
-"""Tests for includes/log.py: verbosity tiers, colour gating, sanitizing, emit().
+"""Tests for includes/log.py: verbosity tiers and flags, colour gating, sanitizing, emit().
 
 Pure stdlib, no mocking of anything external -- these tests exercise the
 real print-to-stream code paths, using pytest's capsys to capture stdout and
@@ -7,6 +7,7 @@ stderr.
 
 from __future__ import annotations
 
+import argparse
 import re
 from collections.abc import Iterator
 
@@ -395,3 +396,80 @@ def test_del_line_separators_and_bidi_controls_are_stripped(
 def test_ordinary_non_ascii_text_survives(capsys: pytest.CaptureFixture[str]) -> None:
     log.warn("café \u05e9\u05dc\u05d5\u05dd \u2603")
     assert "café \u05e9\u05dc\u05d5\u05dd \u2603" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# the shared -v / -q options
+# --------------------------------------------------------------------------
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="tool")
+    log.add_verbosity_args(parser)
+    return parser
+
+
+@pytest.mark.parametrize(
+    ("argv", "level"),
+    [
+        ([], log.INFO),
+        (["-v"], log.DEBUG),
+        (["--verbose"], log.DEBUG),
+        (["-q"], log.WARN),
+        (["--quiet"], log.WARN),
+        (["-qq"], log.ERROR),
+        (["-q", "-q"], log.ERROR),
+        (["--quiet", "--quiet"], log.ERROR),
+        (["-qqq"], log.ERROR),
+    ],
+)
+def test_verbosity_from_args_maps_the_flags(argv: list[str], level: int) -> None:
+    assert log.verbosity_from_args(_parser().parse_args(argv)) == level
+
+
+def test_verbosity_args_default_to_not_verbose_and_zero_quiet() -> None:
+    args = _parser().parse_args([])
+    assert args.verbose is False
+    assert args.quiet == 0
+
+
+@pytest.mark.parametrize(
+    "argv", [["-v", "-q"], ["-q", "-v"], ["-qq", "-v"], ["--verbose", "--quiet"]]
+)
+def test_verbose_and_quiet_together_is_a_usage_error(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parser().parse_args(argv)
+    assert excinfo.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_verbosity_args_help_text(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["--help"])
+    out = capsys.readouterr().out
+    assert "-v, --verbose" in out
+    assert "-q, --quiet" in out
+    assert "debug detail on stderr" in out
+    assert "warnings only; -qq errors only" in out
+
+
+def test_apply_verbosity_sets_the_module_level_and_returns_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert log.apply_verbosity(_parser().parse_args(["-v"])) == log.DEBUG
+    assert log._verbosity == log.DEBUG
+    log.debug("dbg-msg")
+    assert "dbg-msg" in capsys.readouterr().err
+
+    assert log.apply_verbosity(_parser().parse_args(["-qq"])) == log.ERROR
+    assert log._verbosity == log.ERROR
+    log.warn("warn-msg")
+    log.error("error-msg")
+    err = capsys.readouterr().err
+    assert "warn-msg" not in err
+    assert "error-msg" in err
+
+    assert log.apply_verbosity(_parser().parse_args([])) == log.INFO
+    assert log._verbosity == log.INFO

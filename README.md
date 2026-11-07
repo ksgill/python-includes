@@ -114,7 +114,9 @@ the other.
 ```python
 from . import log
 
-log.set_verbosity(log.DEBUG if args.verbose else log.INFO)
+log.add_verbosity_args(parser)  # -v/--verbose, -q/--quiet, mutually exclusive
+args = parser.parse_args(argv)
+log.apply_verbosity(args)  # -v DEBUG, -q WARN, -qq ERROR, neither INFO
 log.info("starting")  # stderr, timestamped
 log.warn("that looks wrong")
 log.emit(result)  # stdout, undecorated: the data channel
@@ -125,9 +127,11 @@ log.die("cannot continue: fix X and re-run")  # error, then exit 1
 `NO_COLOR` or `TERM=dumb`, or off a terminal — for a tool that colours its own
 report on stdout.
 
-Tiers are `ERROR` (-1), `WARN` (0), `INFO` (1, the default) and `DEBUG` (2). A
-tool that is quiet unless given `-v` can pass the flag count straight to
-`set_verbosity`.
+Tiers are `ERROR` (-1), `WARN` (0), `INFO` (1, the default) and `DEBUG` (2).
+`add_verbosity_args` and `apply_verbosity` are the fleet's one spelling of the
+flags, so every tool reads `-q` the same way; `verbosity_from_args(args)` is
+the mapping alone, for a tool that sets the tier itself. A tool that is quiet
+unless given `-v` can instead pass the flag count straight to `set_verbosity`.
 
 Status messages have control characters stripped, so text from outside the
 tool cannot inject terminal escapes or forge a log line. `emit()` is exempt: it
